@@ -1,0 +1,225 @@
+Content Structure:
+
+View to show course details with the number of videos/exams in each course:
+
+CREATE VIEW course_details AS
+SELECT c.course_id, c.course_title, t.track_title, COUNT(l.lesson_id) AS num_lessons
+FROM course_table c
+JOIN track_table t ON c.track_id = t.track_id
+LEFT JOIN topic_table tpc ON c.course_id = tpc.course_id
+LEFT JOIN lesson_table l ON tpc.topic_id = l.topic_id AND l.lesson_type IN ('video', 'exam')
+GROUP BY c.course_id, c.course_title, t.track_title;
+
+course_details View:
+
+course_id	The unique identifier for the course.
+course_title	The title of the course.
+track_title	The title of the track to which the course belongs.
+num_lessons	The number of lessons (videos/exams) in the course.
+
+
+View to show topic details for each course:
+
+
+CREATE VIEW topic_details AS
+SELECT c.course_id, c.course_title, t.track_title, tpc.topic_id, tpc.topic_title, COUNT(l.lesson_id) AS num_lessons
+FROM course_table c
+JOIN track_table t ON c.track_id = t.track_id
+JOIN topic_table tpc ON c.course_id = tpc.course_id
+LEFT JOIN lesson_table l ON tpc.topic_id = l.topic_id
+GROUP BY c.course_id, c.course_title, t.track_title, tpc.topic_id, tpc.topic_title;
+
+topic_details View:
+
+course_id	The unique identifier for the course.
+course_title	The title of the course.
+track_title	The title of the track to which the course belongs.
+topic_id	The unique identifier for the topic.
+topic_title	The title of the topic.
+num_lessons	The number of lessons in the topic.
+
+
+View to show lesson details for each topic:
+
+CREATE VIEW lesson_details AS
+SELECT c.course_id, c.course_title, t.track_title, tpc.topic_id, tpc.topic_title, l.lesson_id, l.lesson_title, l.lesson_type, l.duration_in_sec
+FROM course_table c
+JOIN track_table t ON c.track_id = t.track_id
+JOIN topic_table tpc ON c.course_id = tpc.course_id
+JOIN lesson_table l ON tpc.topic_id = l.topic_id;
+
+
+lesson_details View:
+
+course_id	The unique identifier for the course.
+course_title	The title of the course.
+track_title	The title of the track to which the course belongs.
+topic_id	The unique identifier for the topic.
+topic_title	The title of the topic.
+lesson_id	The unique identifier for the lesson.
+lesson_title	The title of the lesson.
+lesson_type	The type of the lesson (e.g., video, exam, etc.).
+duration_in_sec	The duration of the lesson in seconds (if applicable).
+
+
+
+
+User Activity,Retention Rates
+
+
+user_activity_summary View:
+
+
+CREATE VIEW user_activity_summary AS
+SELECT DATE(activity_recorded_datetime_in_utc) AS activity_date,
+       WEEK(activity_recorded_datetime_in_utc) AS activity_week,
+       MONTH(activity_recorded_datetime_in_utc) AS activity_month,
+       user_id,
+       SUM(duration_in_sec) / 60 AS total_minutes
+FROM user_lesson_progress_log
+GROUP BY activity_date, activity_week, activity_month, user_id;
+
+
+activity_date	The date of user activity (daily granularity).
+activity_week	The week number of the year for user activity.
+activity_month	The month number for user activity.
+user_id	The unique identifier for the user.
+total_minutes	The total minutes spent by the user on that activity.
+
+
+average_time_spent View:
+
+CREATE VIEW average_time_spent AS
+SELECT activity_date,
+       activity_week,
+       activity_month,
+       AVG(total_minutes) AS avg_time_spent
+FROM user_activity_summary
+GROUP BY activity_date, activity_week, activity_month;
+
+activity_date	The date of user activity (daily granularity).
+activity_week	The week number of the year for user activity.
+activity_month	The month number for user activity.
+avg_time_spent	The average time spent by users on that activity.
+
+
+
+day_of_week_activity View:
+
+
+CREATE VIEW day_of_week_activity AS
+SELECT DAYOFWEEK(activity_date) AS day_of_week,
+       COUNT(DISTINCT user_id) AS active_users
+FROM user_activity_summary
+GROUP BY day_of_week;
+
+
+day_of_week	The day of the week represented as a number (1-7).
+active_users	The number of active users on that day of the week.
+
+
+
+
+
+User Learning Streaks:
+
+
+view:
+CREATE VIEW user_streak_data AS
+SELECT user_id,
+       activity_date,
+       DATEDIFF(activity_date, COALESCE(prev_activity_date, activity_date)) AS streak_length
+FROM (
+  SELECT user_id,
+         activity_date,
+         LAG(activity_date) OVER (PARTITION BY user_id ORDER BY activity_date) AS prev_activity_date
+  FROM (
+    SELECT user_id,
+           DATE(activity_recorded_datetime_in_utc) AS activity_date
+    FROM user_lesson_progress_log
+  ) AS user_activity
+) AS user_streaks;
+
+
+user_id	The unique identifier for the user.
+activity_date	The date of the learning activity (daily granularity).
+streak_length	The streak length of the user on that activity date.
+
+
+Completion Patterns of Users:
+view:
+CREATE VIEW user_course_completion_percentage AS
+SELECT ulp.user_id,
+       c.course_id,
+       c.course_title,
+       (SUM(CASE WHEN ulp.completion_percentage_difference >= 100 THEN 1 ELSE 0 END) / COUNT(ulp.id)) * 100 AS completion_percentage
+FROM user_lesson_progress_log ulp
+JOIN lesson_table l ON ulp.lesson_id = l.lesson_id
+JOIN topic_table t ON l.topic_id = t.topic_id
+JOIN course_table c ON t.course_id = c.course_id
+GROUP BY ulp.user_id, c.course_id, c.course_title;
+
+user_id	                The unique identifier for the user.
+course_id	        The unique identifier for the course.
+course_title	        The title of the course.
+completion_percentage	The completion percentage for the user and course.
+
+
+User Feedback
+
+
+view:
+
+CREATE VIEW user_feedback_details AS
+SELECT uf.user_id,
+       c.course_id,
+       c.course_title,
+       t.topic_id,
+       t.topic_title,
+       uf.language,
+       uf.question,
+       uf.answer
+FROM user_feedback uf
+JOIN course_table c ON uf.course_id = c.course_id
+JOIN topic_table t ON uf.topic_id = t.topic_id;
+
+
+
+user_id	        The unique identifier for the user.
+course_id	The unique identifier for the course.
+course_title	The title of the course.
+topic_id	The unique identifier for the topic.
+topic_title	The title of the topic.
+language	The language of the feedback.
+question	The feedback question.
+answer	        The user's answer to the feedback question.
+
+
+
+
+Demographics Based Analysis:
+
+view:
+CREATE VIEW user_demographic_data AS
+SELECT ur.user_id,
+       ur.registration_date,
+       ur.user_info,
+       ud.city,
+       ud.education
+FROM user_registration ur
+LEFT JOIN user_demographics ud ON ur.user_id = ud.user_id;
+
+
+
+user_id	                The unique identifier for the user.
+registration_date	The date of user registration.
+user_info	        Additional user information.
+city	                The city where the user is located (if available).
+education	        The educational background of the user (if available).
+
+
+
+
+
+
+
